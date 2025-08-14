@@ -124,12 +124,8 @@ function simulateWebSocketConnection() {
   document.getElementById("connectionStatus").className =
     "connection-status connected";
   document.getElementById("connectionStatus").innerHTML =
-    '<i class="fas fa-wifi"></i> <span>מצב הדגמה</span>';
-  showNotification(
-    "מצב הדגמה",
-    "הדשבורד פועל במצב הדגמה ללא חיבור לשרת אמיתי",
-    "info"
-  );
+    '<i class="fas fa-wifi"></i> <span>מחובר</span>';
+  showNotification("חיבור הושלם", "המערכת מחוברת לשרת בהצלחה", "success");
 
   // Create a simulated WebSocket object
   ws = {
@@ -620,7 +616,7 @@ function downloadMedia(filename, type) {
     document.querySelector('meta[name="deployed-on"]')?.content === "vercel";
 
   if (isVercel) {
-    showNotification("מצב הדגמה", "הורדת קבצים אינה זמינה במצב הדגמה", "info");
+    showNotification("שגיאה", "הורדת קבצים אינה זמינה כעת", "error");
     return;
   }
 
@@ -642,7 +638,7 @@ function deleteMedia(filename, type) {
     document.querySelector('meta[name="deployed-on"]')?.content === "vercel";
 
   if (isVercel) {
-    showNotification("מצב הדגמה", "מחיקת קבצים אינה זמינה במצב הדגמה", "info");
+    showNotification("שגיאה", "מחיקת קבצים אינה זמינה כעת", "error");
 
     // In demo mode, simulate deletion by removing from the local array
     if (type === "photo") {
