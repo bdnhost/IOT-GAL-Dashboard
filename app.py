@@ -143,9 +143,13 @@ if os.path.exists(static_dir):
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 
+# For local development
 if __name__ == "__main__":
     import uvicorn
 
     print("🛡️ מפעיל Enhanced Security Dashboard...")
     print("📱 פתח בדפדפן: http://localhost:8000")
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
+# This is for Vercel deployment - it needs to import the app variable
+# The variable name 'app' is what Vercel looks for by default

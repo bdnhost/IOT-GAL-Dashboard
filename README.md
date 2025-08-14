@@ -58,6 +58,35 @@ The dashboard is built using:
 
 This dashboard can be integrated with various security systems by modifying the WebSocket communication protocol to match your system's data format. The current implementation is designed to work with the IOT-GAL security monitoring system.
 
+## Deployment to Vercel
+
+This project is configured for easy deployment to Vercel:
+
+1. Fork or clone this repository to your GitHub account
+
+2. Connect your GitHub repository to Vercel:
+   - Go to [Vercel](https://vercel.com/) and sign in
+   - Click "New Project"
+   - Import your GitHub repository
+   - Select the "Python" framework preset
+   - Keep the default build settings
+   - Click "Deploy"
+
+3. Your dashboard will be deployed and accessible at a Vercel-provided URL
+
+4. For custom domains:
+   - Go to your project settings in Vercel
+   - Navigate to the "Domains" section
+   - Add your custom domain and follow the verification steps
+
+### Environment Variables
+
+If needed, you can configure environment variables in Vercel:
+
+1. Go to your project settings
+2. Navigate to the "Environment Variables" section
+3. Add any required variables for your specific configuration
+
 ## License
 
 MIT License
