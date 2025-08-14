@@ -9,14 +9,24 @@ from fastapi.staticfiles import StaticFiles
 import json
 import os
 import sys
+import base64
 from datetime import datetime
 import asyncio
 from typing import List
+import cv2
+import numpy as np
+from fastapi.responses import StreamingResponse
+
+# Add the webcam_monitor module to the path
+sys.path.append(os.path.join(os.path.dirname(__file__), "..", "webcam_monitor", "src"))
+from camera.webcam_capture import WebcamCapture
 
 app = FastAPI(title="Enhanced Security Dashboard")
 
 # Global variables
 connected_clients: List[WebSocket] = []
+camera = WebcamCapture(0)  # Initialize the camera with index 0
+camera_initialized = False
 current_stats = {
     "motion_count": 0,
     "sound_alerts": 0,
@@ -27,6 +37,18 @@ current_stats = {
     "motion_stats": {"recent_count": 0, "total_count": 0},
     "audio_stats": {"current_volume": 0.0, "current_db": 0.0, "alerts_count": 0},
 }
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize the camera when the server starts"""
+    global camera_initialized
+    if camera.initialize_camera():
+        camera.start_monitoring()
+        camera_initialized = True
+        print("✅ Camera initialized successfully")
+    else:
+        print("❌ Failed to initialize camera")
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -135,6 +157,68 @@ async def get_recordings():
             "created": datetime.now().isoformat(),
         },
     ]
+
+
+@app.get("/video_feed")
+async def video_feed():
+    """Stream real camera feed"""
+    return StreamingResponse(
+        generate_frames(), media_type="multipart/x-mixed-replace; boundary=frame"
+    )
+
+
+async def generate_frames():
+    """Generate frames from the real camera"""
+    while True:
+        if not camera_initialized:
+            # If camera is not initialized, yield a blank frame with a message
+            frame = create_error_frame("Camera not initialized")
+        else:
+            # Capture frame from the real camera
+            frame = camera.capture_frame()
+
+            if frame is None:
+                # If frame capture failed, yield an error frame
+                frame = create_error_frame("Failed to capture frame")
+            else:
+                # Add timestamp to the frame
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                cv2.putText(
+                    frame,
+                    timestamp,
+                    (10, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.7,
+                    (0, 255, 0),
+                    2,
+                )
+
+        # Convert frame to JPEG
+        ret, buffer = cv2.imencode(".jpg", frame)
+        if ret:
+            frame_bytes = buffer.tobytes()
+            yield (
+                b"--frame\r\n"
+                b"Content-Type: image/jpeg\r\n\r\n" + frame_bytes + b"\r\n"
+            )
+
+        # Sleep to control frame rate
+        await asyncio.sleep(0.1)
+
+
+def create_error_frame(message):
+    """Create an error frame with a message"""
+    frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    cv2.putText(
+        frame,
+        message,
+        (50, 240),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        1,
+        (0, 0, 255),
+        2,
+    )
+    return frame
 
 
 # Serve static files
