@@ -23,6 +23,14 @@ let systemControls = {
 
 // Initialize the dashboard
 document.addEventListener("DOMContentLoaded", function () {
+  // Add meta tag for Vercel detection
+  if (window.location.hostname.includes("vercel.app")) {
+    const meta = document.createElement("meta");
+    meta.name = "deployed-on";
+    meta.content = "vercel";
+    document.head.appendChild(meta);
+  }
+
   // Connect to WebSocket
   connectWebSocket();
 
@@ -58,32 +66,171 @@ document.addEventListener("DOMContentLoaded", function () {
 
 // WebSocket connection
 function connectWebSocket() {
-  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
+  // For Vercel deployment, we need to handle WebSockets differently
+  // Vercel doesn't support WebSockets in serverless functions directly
 
-  ws.onopen = function () {
-    document.getElementById("connectionStatus").className =
-      "connection-status connected";
-    document.getElementById("connectionStatus").innerHTML =
-      '<i class="fas fa-wifi"></i> <span>מחובר</span>';
-    showNotification("חיבור הושלם", "המערכת מחוברת לשרת בהצלחה", "success");
+  // Check if we're on Vercel (vercel.app domain or custom domain with Vercel)
+  const isVercel =
+    window.location.hostname.includes("vercel.app") ||
+    document.querySelector('meta[name="deployed-on"]')?.content === "vercel";
+
+  let wsUrl;
+
+  if (isVercel) {
+    // In production on Vercel, we'll use a demo mode with simulated data
+    console.log("Running in Vercel environment - using demo mode");
+
+    // Create a simulated WebSocket that doesn't actually connect
+    // but provides demo data through the same interface
+    simulateWebSocketConnection();
+    return;
+  } else {
+    // Local development - use real WebSocket
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    wsUrl = `${protocol}//${window.location.host}/ws`;
+    ws = new WebSocket(wsUrl);
+
+    ws.onopen = function () {
+      document.getElementById("connectionStatus").className =
+        "connection-status connected";
+      document.getElementById("connectionStatus").innerHTML =
+        '<i class="fas fa-wifi"></i> <span>מחובר</span>';
+      showNotification("חיבור הושלם", "המערכת מחוברת לשרת בהצלחה", "success");
+    };
+
+    ws.onclose = function () {
+      document.getElementById("connectionStatus").className =
+        "connection-status disconnected";
+      document.getElementById("connectionStatus").innerHTML =
+        '<i class="fas fa-wifi"></i> <span>מנותק</span>';
+      showNotification("החיבור נותק", "מנסה להתחבר מחדש...", "error");
+
+      // Try to reconnect
+      setTimeout(connectWebSocket, 3000);
+    };
+
+    ws.onmessage = function (event) {
+      const message = JSON.parse(event.data);
+      handleWebSocketMessage(message);
+    };
+  }
+}
+
+// Simulate WebSocket connection for Vercel environment
+function simulateWebSocketConnection() {
+  console.log("Simulating WebSocket connection for demo purposes");
+
+  // Show connected status
+  document.getElementById("connectionStatus").className =
+    "connection-status connected";
+  document.getElementById("connectionStatus").innerHTML =
+    '<i class="fas fa-wifi"></i> <span>מצב הדגמה</span>';
+  showNotification(
+    "מצב הדגמה",
+    "הדשבורד פועל במצב הדגמה ללא חיבור לשרת אמיתי",
+    "info"
+  );
+
+  // Create a simulated WebSocket object
+  ws = {
+    readyState: 1, // WebSocket.OPEN
+    send: function (data) {
+      console.log("Demo mode - message sent:", data);
+      // Simulate response based on the message
+      const message = JSON.parse(data);
+
+      if (message.type === "capture_photo") {
+        setTimeout(() => {
+          handleWebSocketMessage({
+            type: "photo_captured",
+            filename: "demo_capture_" + new Date().getTime() + ".jpg",
+          });
+        }, 1000);
+      }
+
+      if (message.type === "start_recording") {
+        setTimeout(() => {
+          handleWebSocketMessage({
+            type: "recording_saved",
+            filename: "demo_recording_" + new Date().getTime() + ".wav",
+          });
+        }, 3000);
+      }
+    },
   };
 
-  ws.onclose = function () {
-    document.getElementById("connectionStatus").className =
-      "connection-status disconnected";
-    document.getElementById("connectionStatus").innerHTML =
-      '<i class="fas fa-wifi"></i> <span>מנותק</span>';
-    showNotification("החיבור נותק", "מנסה להתחבר מחדש...", "error");
+  // Send initial connection message
+  handleWebSocketMessage({
+    type: "connection_established",
+    message: "Connected to Demo Mode",
+    data: {
+      motion_count: 14,
+      sound_alerts: 3,
+      camera_active: true,
+      audio_active: true,
+      uptime: new Date().toISOString(),
+      motion_stats: {
+        recent_count: 0,
+        total_count: 14,
+      },
+      audio_stats: {
+        current_volume: 0.1,
+        current_db: 30.0,
+        alerts_count: 0,
+      },
+    },
+  });
 
-    // Try to reconnect
-    setTimeout(connectWebSocket, 3000);
-  };
+  // Simulate periodic updates
+  let demoMotionCount = 0;
+  let demoSoundCount = 0;
 
-  ws.onmessage = function (event) {
-    const message = JSON.parse(event.data);
-    handleWebSocketMessage(message);
-  };
+  setInterval(() => {
+    // Randomly simulate motion or sound
+    if (Math.random() < 0.1) {
+      demoMotionCount++;
+      handleWebSocketMessage({
+        type: "motion_alert",
+        timestamp: new Date().toISOString(),
+        area: Math.floor(Math.random() * 10000) + 1000,
+        count: demoMotionCount,
+      });
+    }
+
+    if (Math.random() < 0.05) {
+      demoSoundCount++;
+      handleWebSocketMessage({
+        type: "audio_alert",
+        timestamp: new Date().toISOString(),
+        db_level: Math.floor(Math.random() * 20) + 40,
+        sound_type: ["קול רם", "דיבור", "רעש", "מוזיקה"][
+          Math.floor(Math.random() * 4)
+        ],
+      });
+    }
+
+    // Regular stats update
+    handleWebSocketMessage({
+      type: "stats_update",
+      data: {
+        motion_count: 14 + demoMotionCount,
+        sound_alerts: 3 + demoSoundCount,
+        camera_active: true,
+        audio_active: true,
+        last_motion: demoMotionCount > 0 ? new Date().toISOString() : null,
+        uptime: new Date(new Date() - 3600000).toISOString(), // 1 hour ago
+        motion_stats: {
+          recent_count: Math.floor(Math.random() * 3),
+          total_count: 14 + demoMotionCount,
+        },
+        audio_stats: {
+          current_volume: Math.random() * 0.3,
+          current_db: 20 + Math.random() * 30,
+          alerts_count: demoSoundCount,
+        },
+      },
+    });
+  }, 2000);
 }
 
 // Handle WebSocket messages
@@ -131,6 +278,12 @@ function handleWebSocketMessage(message) {
         `הודעה קולית הושמעה: "${message.text}"`,
         "info"
       );
+      break;
+
+    case "connection_established":
+      if (message.data) {
+        updateStats(message.data);
+      }
       break;
   }
 }
@@ -291,6 +444,32 @@ function updateAlertsList() {
 
 // Load photos from the server
 function loadPhotos() {
+  // Check if we're in demo mode (Vercel)
+  const isVercel =
+    window.location.hostname.includes("vercel.app") ||
+    document.querySelector('meta[name="deployed-on"]')?.content === "vercel";
+
+  if (isVercel) {
+    // Generate demo photos
+    const demoPhotos = [];
+    const now = new Date();
+
+    for (let i = 0; i < 5; i++) {
+      const timestamp = new Date(now - i * 3600000); // Each photo 1 hour apart
+      demoPhotos.push({
+        filename: `demo_photo_${i + 1}.jpg`,
+        size: Math.floor(Math.random() * 500000) + 100000,
+        created: timestamp.toISOString(),
+      });
+    }
+
+    mediaItems.photos = demoPhotos;
+    document.getElementById("capturesCount").textContent = demoPhotos.length;
+    updateMediaGrid("photos");
+    return;
+  }
+
+  // Normal API call for local development
   fetch("/api/captures")
     .then((response) => response.json())
     .then((photos) => {
@@ -303,6 +482,33 @@ function loadPhotos() {
 
 // Load recordings from the server
 function loadRecordings() {
+  // Check if we're in demo mode (Vercel)
+  const isVercel =
+    window.location.hostname.includes("vercel.app") ||
+    document.querySelector('meta[name="deployed-on"]')?.content === "vercel";
+
+  if (isVercel) {
+    // Generate demo recordings
+    const demoRecordings = [];
+    const now = new Date();
+
+    for (let i = 0; i < 3; i++) {
+      const timestamp = new Date(now - i * 7200000); // Each recording 2 hours apart
+      demoRecordings.push({
+        filename: `demo_recording_${i + 1}.wav`,
+        size: Math.floor(Math.random() * 1000000) + 500000,
+        created: timestamp.toISOString(),
+      });
+    }
+
+    mediaItems.recordings = demoRecordings;
+    document.getElementById("recordingsCount").textContent =
+      demoRecordings.length;
+    updateMediaGrid("recordings");
+    return;
+  }
+
+  // Normal API call for local development
   fetch("/api/recordings")
     .then((response) => response.json())
     .then((recordings) => {
@@ -326,13 +532,26 @@ function updateMediaGrid(type) {
     return;
   }
 
+  // Check if we're in demo mode (Vercel)
+  const isVercel =
+    window.location.hostname.includes("vercel.app") ||
+    document.querySelector('meta[name="deployed-on"]')?.content === "vercel";
+
   if (type === "photos") {
     gridContainer.innerHTML = items
       .slice(0, 12)
-      .map(
-        (item) => `
-            <div class="media-item" data-fancybox="gallery" data-src="/captures/${item.filename}">
-                <img src="/captures/${item.filename}" alt="${item.filename}">
+      .map((item) => {
+        // For Vercel, use placeholder images
+        const imgSrc = isVercel
+          ? `https://via.placeholder.com/300x200?text=Demo+Image+${item.filename.replace(/\D/g, "")}`
+          : `/captures/${item.filename}`;
+
+        const dataFancybox = isVercel ? "" : 'data-fancybox="gallery"';
+        const dataSrc = isVercel ? "" : `data-src="/captures/${item.filename}"`;
+
+        return `
+            <div class="media-item" ${dataFancybox} ${dataSrc}>
+                <img src="${imgSrc}" alt="${item.filename}">
                 <div class="media-overlay">
                     ${new Date(item.created).toLocaleTimeString("he-IL")}
                 </div>
@@ -345,16 +564,27 @@ function updateMediaGrid(type) {
                     </button>
                 </div>
             </div>
-        `
-      )
+        `;
+      })
       .join("");
   } else {
     gridContainer.innerHTML = items
       .slice(0, 12)
-      .map(
-        (item) => `
+      .map((item) => {
+        // For Vercel, show demo audio controls without actual source
+        const audioContent = isVercel
+          ? `<div class="demo-audio-player">
+              <i class="fas fa-music"></i> Demo Audio Player
+              <div class="demo-audio-controls">
+                <button class="btn btn-sm btn-outline-primary"><i class="fas fa-play"></i></button>
+                <button class="btn btn-sm btn-outline-secondary"><i class="fas fa-pause"></i></button>
+              </div>
+            </div>`
+          : `<audio src="/recordings/${item.filename}" controls></audio>`;
+
+        return `
             <div class="media-item">
-                <audio src="/recordings/${item.filename}" controls></audio>
+                ${audioContent}
                 <div class="media-overlay">
                     ${new Date(item.created).toLocaleTimeString("he-IL")}
                 </div>
@@ -367,13 +597,13 @@ function updateMediaGrid(type) {
                     </button>
                 </div>
             </div>
-        `
-      )
+        `;
+      })
       .join("");
   }
 
   // Initialize Fancybox for photos
-  if (type === "photos" && typeof Fancybox !== "undefined") {
+  if (type === "photos" && typeof Fancybox !== "undefined" && !isVercel) {
     Fancybox.bind('[data-fancybox="gallery"]', {
       caption: function (fancybox, slide) {
         return slide.caption || slide.thumbSrc.split("/").pop();
@@ -384,6 +614,16 @@ function updateMediaGrid(type) {
 
 // Download media file
 function downloadMedia(filename, type) {
+  // Check if we're in demo mode (Vercel)
+  const isVercel =
+    window.location.hostname.includes("vercel.app") ||
+    document.querySelector('meta[name="deployed-on"]')?.content === "vercel";
+
+  if (isVercel) {
+    showNotification("מצב הדגמה", "הורדת קבצים אינה זמינה במצב הדגמה", "info");
+    return;
+  }
+
   const path =
     type === "photo" ? `/captures/${filename}` : `/recordings/${filename}`;
   const a = document.createElement("a");
@@ -396,6 +636,34 @@ function downloadMedia(filename, type) {
 
 // Delete media file
 function deleteMedia(filename, type) {
+  // Check if we're in demo mode (Vercel)
+  const isVercel =
+    window.location.hostname.includes("vercel.app") ||
+    document.querySelector('meta[name="deployed-on"]')?.content === "vercel";
+
+  if (isVercel) {
+    showNotification("מצב הדגמה", "מחיקת קבצים אינה זמינה במצב הדגמה", "info");
+
+    // In demo mode, simulate deletion by removing from the local array
+    if (type === "photo") {
+      mediaItems.photos = mediaItems.photos.filter(
+        (item) => item.filename !== filename
+      );
+      document.getElementById("capturesCount").textContent =
+        mediaItems.photos.length;
+      updateMediaGrid("photos");
+    } else {
+      mediaItems.recordings = mediaItems.recordings.filter(
+        (item) => item.filename !== filename
+      );
+      document.getElementById("recordingsCount").textContent =
+        mediaItems.recordings.length;
+      updateMediaGrid("recordings");
+    }
+
+    return;
+  }
+
   if (
     !confirm(
       `האם אתה בטוח שברצונך למחוק את ה${type === "photo" ? "תמונה" : "הקלטה"}?`
@@ -772,14 +1040,27 @@ function filterMedia(type, searchText, filterType = "all") {
     return;
   }
 
+  // Check if we're in demo mode (Vercel)
+  const isVercel =
+    window.location.hostname.includes("vercel.app") ||
+    document.querySelector('meta[name="deployed-on"]')?.content === "vercel";
+
   // Use the same rendering logic as updateMediaGrid but with filtered items
   if (type === "photos") {
     gridContainer.innerHTML = filtered
       .slice(0, 24)
-      .map(
-        (item) => `
-            <div class="media-item" data-fancybox="gallery" data-src="/captures/${item.filename}">
-                <img src="/captures/${item.filename}" alt="${item.filename}">
+      .map((item) => {
+        // For Vercel, use placeholder images
+        const imgSrc = isVercel
+          ? `https://via.placeholder.com/300x200?text=Demo+Image+${item.filename.replace(/\D/g, "")}`
+          : `/captures/${item.filename}`;
+
+        const dataFancybox = isVercel ? "" : 'data-fancybox="gallery"';
+        const dataSrc = isVercel ? "" : `data-src="/captures/${item.filename}"`;
+
+        return `
+            <div class="media-item" ${dataFancybox} ${dataSrc}>
+                <img src="${imgSrc}" alt="${item.filename}">
                 <div class="media-overlay">
                     ${new Date(item.created).toLocaleTimeString("he-IL")}
                 </div>
@@ -792,16 +1073,27 @@ function filterMedia(type, searchText, filterType = "all") {
                     </button>
                 </div>
             </div>
-        `
-      )
+        `;
+      })
       .join("");
   } else {
     gridContainer.innerHTML = filtered
       .slice(0, 24)
-      .map(
-        (item) => `
+      .map((item) => {
+        // For Vercel, show demo audio controls without actual source
+        const audioContent = isVercel
+          ? `<div class="demo-audio-player">
+              <i class="fas fa-music"></i> Demo Audio Player
+              <div class="demo-audio-controls">
+                <button class="btn btn-sm btn-outline-primary"><i class="fas fa-play"></i></button>
+                <button class="btn btn-sm btn-outline-secondary"><i class="fas fa-pause"></i></button>
+              </div>
+            </div>`
+          : `<audio src="/recordings/${item.filename}" controls></audio>`;
+
+        return `
             <div class="media-item">
-                <audio src="/recordings/${item.filename}" controls></audio>
+                ${audioContent}
                 <div class="media-overlay">
                     ${new Date(item.created).toLocaleTimeString("he-IL")}
                 </div>
@@ -814,13 +1106,13 @@ function filterMedia(type, searchText, filterType = "all") {
                     </button>
                 </div>
             </div>
-        `
-      )
+        `;
+      })
       .join("");
   }
 
   // Reinitialize Fancybox for photos
-  if (type === "photos" && typeof Fancybox !== "undefined") {
+  if (type === "photos" && typeof Fancybox !== "undefined" && !isVercel) {
     Fancybox.bind('[data-fancybox="gallery"]');
   }
 }
