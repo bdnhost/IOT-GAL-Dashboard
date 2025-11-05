@@ -39,3 +39,4 @@ Thumbs.db
 captures/
 recordings/
 *.log
+.env

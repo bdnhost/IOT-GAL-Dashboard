@@ -32,27 +32,51 @@ The dashboard is built using:
 
 1. Clone the repository:
 
-   ```
+   ```bash
    git clone https://github.com/yourusername/IOT-GAL-Dashboard.git
    cd IOT-GAL-Dashboard
    ```
 
-2. Install the required dependencies:
+2. Create a virtual environment (recommended):
 
+   ```bash
+   python -m venv venv
+   source venv/bin/activate  # On Windows: venv\Scripts\activate
    ```
+
+3. Install the required dependencies:
+
+   ```bash
    pip install -r requirements.txt
    ```
 
-3. Run the application:
+4. Configure the application (optional):
 
+   ```bash
+   cp .env.example .env
+   # Edit .env with your preferred settings
    ```
+
+5. Run the application:
+
+   ```bash
    python app.py
    ```
 
-4. Open your browser and navigate to:
+6. Open your browser and navigate to:
    ```
-   http://localhost:8000
+   http://localhost:8001
    ```
+
+## Configuration
+
+The application can be configured using environment variables. See [CONFIGURATION.md](CONFIGURATION.md) for detailed configuration options.
+
+Quick start:
+- Copy `.env.example` to `.env`
+- Adjust settings as needed
+- Default port is 8001
+- Camera will be auto-detected or fallback to simulation mode
 
 ## Integration
 
