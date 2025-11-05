@@ -20,6 +20,9 @@ let systemControls = {
   motion: true,
   notifications: true,
 };
+let reconnectAttempts = 0;
+let maxReconnectDelay = 30000; // Max 30 seconds
+let reconnectTimer = null;
 
 // Initialize the dashboard
 document.addEventListener("DOMContentLoaded", function () {
@@ -91,6 +94,7 @@ function connectWebSocket() {
     ws = new WebSocket(wsUrl);
 
     ws.onopen = function () {
+      resetReconnect(); // Reset reconnect attempts on successful connection
       document.getElementById("connectionStatus").className =
         "connection-status connected";
       document.getElementById("connectionStatus").innerHTML =
@@ -105,14 +109,50 @@ function connectWebSocket() {
         '<i class="fas fa-wifi"></i> <span>מנותק</span>';
       showNotification("החיבור נותק", "מנסה להתחבר מחדש...", "error");
 
-      // Try to reconnect
-      setTimeout(connectWebSocket, 3000);
+      // Try to reconnect with exponential backoff
+      scheduleReconnect();
+    };
+
+    ws.onerror = function (error) {
+      console.error("WebSocket error:", error);
     };
 
     ws.onmessage = function (event) {
       const message = JSON.parse(event.data);
       handleWebSocketMessage(message);
     };
+  }
+}
+
+// Schedule reconnection with exponential backoff
+function scheduleReconnect() {
+  if (reconnectTimer) {
+    return; // Already scheduled
+  }
+
+  // Calculate delay with exponential backoff: 1s, 2s, 4s, 8s, ...up to max
+  const delay = Math.min(
+    1000 * Math.pow(2, reconnectAttempts),
+    maxReconnectDelay
+  );
+  reconnectAttempts++;
+
+  console.log(
+    `Scheduling reconnect attempt ${reconnectAttempts} in ${delay}ms`
+  );
+
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    connectWebSocket();
+  }, delay);
+}
+
+// Reset reconnect attempts on successful connection
+function resetReconnect() {
+  reconnectAttempts = 0;
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
   }
 }
 
@@ -1116,16 +1156,26 @@ function filterMedia(type, searchText, filterType = "all") {
 // Initialize activity chart
 function initializeActivityChart() {
   const ctx = document.getElementById("activityChart");
-  if (!ctx) return;
-
-  // Initialize with empty data
-  for (let i = 0; i < 10; i++) {
-    timeLabels.push("");
-    motionData.push(0);
-    soundData.push(0);
+  if (!ctx) {
+    console.warn("Activity chart canvas not found");
+    return;
   }
 
-  activityChart = new Chart(ctx, {
+  // Check if Chart.js is loaded
+  if (typeof Chart === "undefined") {
+    console.error("Chart.js library not loaded");
+    return;
+  }
+
+  try {
+    // Initialize with empty data
+    for (let i = 0; i < 10; i++) {
+      timeLabels.push("");
+      motionData.push(0);
+      soundData.push(0);
+    }
+
+    activityChart = new Chart(ctx, {
     type: "line",
     data: {
       labels: timeLabels,
@@ -1175,6 +1225,9 @@ function initializeActivityChart() {
       },
     },
   });
+  } catch (error) {
+    console.error("Error initializing activity chart:", error);
+  }
 }
 
 // Update activity chart with new data

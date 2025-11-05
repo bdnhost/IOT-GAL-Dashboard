@@ -9,17 +9,39 @@ from fastapi.staticfiles import StaticFiles
 import json
 import os
 import sys
-import base64
+import logging
 from datetime import datetime
 import asyncio
-from typing import List
+from typing import List, Optional, Dict, Any
 import cv2
 import numpy as np
-from fastapi.responses import StreamingResponse
+from dotenv import load_dotenv
 
-# Add the webcam_monitor module to the path
-sys.path.append(os.path.join(os.path.dirname(__file__), "..", "webcam_monitor", "src"))
-from camera.webcam_capture import WebcamCapture
+# Load environment variables from .env file
+load_dotenv()
+
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# Try to import webcam_monitor module if available
+try:
+    sys.path.append(os.path.join(os.path.dirname(__file__), "..", "webcam_monitor", "src"))
+    from camera.webcam_capture import WebcamCapture
+    WEBCAM_AVAILABLE = True
+    logger.info("WebcamCapture module loaded successfully")
+except ImportError as e:
+    logger.warning(f"WebcamCapture module not available: {e}")
+    WEBCAM_AVAILABLE = False
+    WebcamCapture = None
+
+# Configuration from environment variables
+HOST = os.getenv("APP_HOST", "0.0.0.0")
+PORT = int(os.getenv("APP_PORT", "8001"))
+DEBUG = os.getenv("DEBUG", "false").lower() == "true"
 
 app = FastAPI(title="Enhanced Security Dashboard")
 
@@ -45,25 +67,47 @@ async def startup_event():
     """Initialize the camera when the server starts"""
     global camera, camera_initialized, use_fallback
 
+    if not WEBCAM_AVAILABLE:
+        logger.warning("WebcamCapture module not available - using fallback mode")
+        use_fallback = True
+        return
+
     # Try different camera indices (0, 1, 2)
     for camera_index in range(3):
         try:
-            print(f"🔍 Trying to initialize camera with index {camera_index}...")
+            logger.info(f"Trying to initialize camera with index {camera_index}...")
             camera = WebcamCapture(camera_index)
             if camera.initialize_camera():
                 camera.start_monitoring()
                 camera_initialized = True
-                print(f"✅ Camera with index {camera_index} initialized successfully")
+                logger.info(f"Camera with index {camera_index} initialized successfully")
                 break  # Exit the loop if camera is initialized successfully
             else:
-                print(f"❌ Failed to initialize camera with index {camera_index}")
+                logger.warning(f"Failed to initialize camera with index {camera_index}")
         except Exception as e:
-            print(f"❌ Error initializing camera with index {camera_index}: {e}")
+            logger.error(f"Error initializing camera with index {camera_index}: {e}")
 
     # If no camera was initialized, use fallback mode
     if not camera_initialized:
-        print("❌ Failed to initialize any camera - using fallback mode")
+        logger.warning("Failed to initialize any camera - using fallback mode")
         use_fallback = True
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Cleanup resources when the server shuts down"""
+    global camera
+
+    if camera is not None:
+        try:
+            logger.info("Shutting down camera...")
+            if hasattr(camera, 'stop_monitoring'):
+                camera.stop_monitoring()
+            if hasattr(camera, 'release'):
+                camera.release()
+            logger.info("Camera shut down successfully")
+        except Exception as e:
+            logger.error(f"Error shutting down camera: {e}")
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -76,6 +120,7 @@ async def get_dashboard():
         with open(template_path, "r", encoding="utf-8") as f:
             return HTMLResponse(content=f.read())
     except FileNotFoundError:
+        logger.error(f"Template file not found: {template_path}")
         return HTMLResponse(
             content="""
         <html><body>
@@ -85,7 +130,14 @@ async def get_dashboard():
             + template_path
             + """</p>
         </body></html>
-        """
+        """,
+            status_code=500
+        )
+    except Exception as e:
+        logger.error(f"Error reading template file: {e}")
+        return HTMLResponse(
+            content="<html><body><h1>Server Error</h1></body></html>",
+            status_code=500
         )
 
 
@@ -101,7 +153,7 @@ async def websocket_endpoint(websocket: WebSocket):
     """WebSocket endpoint for real-time updates"""
     await websocket.accept()
     connected_clients.append(websocket)
-    print(f"Client connected. Total clients: {len(connected_clients)}")
+    logger.info(f"Client connected. Total clients: {len(connected_clients)}")
 
     try:
         # Send initial connection message
@@ -118,76 +170,101 @@ async def websocket_endpoint(websocket: WebSocket):
 
         # Send periodic updates
         while True:
-            # Update stats
-            current_stats["motion_stats"]["recent_count"] = 0
-            current_stats["audio_stats"]["current_volume"] = 0.1
-            current_stats["audio_stats"]["current_db"] = 30.0
+            try:
+                # Update stats
+                current_stats["motion_stats"]["recent_count"] = 0
+                current_stats["audio_stats"]["current_volume"] = 0.1
+                current_stats["audio_stats"]["current_db"] = 30.0
 
-            # Send stats update
-            await websocket.send_text(
-                json.dumps(
-                    {"type": "stats_update", "data": current_stats},
-                    default=json_serializer,
+                # Send stats update
+                await websocket.send_text(
+                    json.dumps(
+                        {"type": "stats_update", "data": current_stats},
+                        default=json_serializer,
+                    )
                 )
-            )
 
-            await asyncio.sleep(2)  # Update every 2 seconds
+                await asyncio.sleep(2)  # Update every 2 seconds
+            except Exception as e:
+                logger.error(f"Error sending WebSocket update: {e}")
+                break
 
     except WebSocketDisconnect:
-        connected_clients.remove(websocket)
-        print(f"Client disconnected. Total clients: {len(connected_clients)}")
+        logger.info("Client disconnected normally")
+    except Exception as e:
+        logger.error(f"WebSocket error: {e}")
+    finally:
+        if websocket in connected_clients:
+            connected_clients.remove(websocket)
+        logger.info(f"Client removed. Total clients: {len(connected_clients)}")
 
 
 @app.get("/api/captures")
 async def get_captures():
     """API לקבלת רשימת תמונות"""
-    # Check if captures directory exists and has files
-    captures_dir = os.path.join(os.path.dirname(__file__), "captures")
-    if not os.path.exists(captures_dir) or not os.listdir(captures_dir):
-        # Return empty list if directory is empty
+    try:
+        # Check if captures directory exists and has files
+        captures_dir = os.path.join(os.path.dirname(__file__), "captures")
+        if not os.path.exists(captures_dir):
+            logger.debug("Captures directory does not exist")
+            return []
+
+        # List files in the captures directory
+        photos = []
+        for filename in os.listdir(captures_dir):
+            if filename.endswith((".jpg", ".jpeg", ".png")):
+                try:
+                    filepath = os.path.join(captures_dir, filename)
+                    stat = os.stat(filepath)
+                    photos.append(
+                        {
+                            "filename": filename,
+                            "size": stat.st_size,
+                            "created": datetime.fromtimestamp(stat.st_ctime).isoformat(),
+                        }
+                    )
+                except Exception as e:
+                    logger.error(f"Error reading file {filename}: {e}")
+                    continue
+
+        return sorted(photos, key=lambda x: x["created"], reverse=True)
+    except Exception as e:
+        logger.error(f"Error getting captures: {e}")
         return []
-
-    # List files in the captures directory
-    photos = []
-    for filename in os.listdir(captures_dir):
-        if filename.endswith((".jpg", ".jpeg", ".png")):
-            filepath = os.path.join(captures_dir, filename)
-            stat = os.stat(filepath)
-            photos.append(
-                {
-                    "filename": filename,
-                    "size": stat.st_size,
-                    "created": datetime.fromtimestamp(stat.st_ctime).isoformat(),
-                }
-            )
-
-    return sorted(photos, key=lambda x: x["created"], reverse=True)
 
 
 @app.get("/api/recordings")
 async def get_recordings():
     """API לקבלת רשימת הקלטות אודיו"""
-    # Check if recordings directory exists and has files
-    recordings_dir = os.path.join(os.path.dirname(__file__), "recordings")
-    if not os.path.exists(recordings_dir) or not os.listdir(recordings_dir):
-        # Return empty list if directory is empty
+    try:
+        # Check if recordings directory exists and has files
+        recordings_dir = os.path.join(os.path.dirname(__file__), "recordings")
+        if not os.path.exists(recordings_dir):
+            logger.debug("Recordings directory does not exist")
+            return []
+
+        # List files in the recordings directory
+        recordings = []
+        for filename in os.listdir(recordings_dir):
+            if filename.endswith((".wav", ".mp3")):
+                try:
+                    filepath = os.path.join(recordings_dir, filename)
+                    stat = os.stat(filepath)
+                    recordings.append(
+                        {
+                            "filename": filename,
+                            "size": stat.st_size,
+                            "created": datetime.fromtimestamp(stat.st_ctime).isoformat(),
+                        }
+                    )
+                except Exception as e:
+                    logger.error(f"Error reading file {filename}: {e}")
+                    continue
+
+        return sorted(recordings, key=lambda x: x["created"], reverse=True)
+    except Exception as e:
+        logger.error(f"Error getting recordings: {e}")
         return []
-
-    # List files in the recordings directory
-    recordings = []
-    for filename in os.listdir(recordings_dir):
-        if filename.endswith((".wav", ".mp3")):
-            filepath = os.path.join(recordings_dir, filename)
-            stat = os.stat(filepath)
-            recordings.append(
-                {
-                    "filename": filename,
-                    "size": stat.st_size,
-                    "created": datetime.fromtimestamp(stat.st_ctime).isoformat(),
-                }
-            )
-
-    return sorted(recordings, key=lambda x: x["created"], reverse=True)
 
 
 @app.get("/video_feed")
@@ -201,44 +278,52 @@ async def video_feed():
 async def generate_frames():
     """Generate frames from the real camera or fallback to simulated frames"""
     while True:
-        if use_fallback or not camera_initialized:
-            # Use simulated frames if camera is not available
-            frame = create_simulated_frame()
-        else:
-            # Try to capture frame from the real camera
-            try:
-                frame = camera.capture_frame()
-
-                if frame is None:
-                    # If frame capture failed, use simulated frame
-                    frame = create_simulated_frame()
-                else:
-                    # Add timestamp to the frame
-                    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    cv2.putText(
-                        frame,
-                        timestamp,
-                        (10, 30),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.7,
-                        (0, 255, 0),
-                        2,
-                    )
-            except Exception:
-                # If any error occurs, use simulated frame
+        try:
+            if use_fallback or not camera_initialized:
+                # Use simulated frames if camera is not available
                 frame = create_simulated_frame()
+            else:
+                # Try to capture frame from the real camera
+                try:
+                    frame = camera.capture_frame()
 
-        # Convert frame to JPEG
-        ret, buffer = cv2.imencode(".jpg", frame)
-        if ret:
-            frame_bytes = buffer.tobytes()
-            yield (
-                b"--frame\r\n"
-                b"Content-Type: image/jpeg\r\n\r\n" + frame_bytes + b"\r\n"
-            )
+                    if frame is None:
+                        # If frame capture failed, use simulated frame
+                        logger.warning("Camera frame capture returned None, using simulated frame")
+                        frame = create_simulated_frame()
+                    else:
+                        # Add timestamp to the frame
+                        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        cv2.putText(
+                            frame,
+                            timestamp,
+                            (10, 30),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.7,
+                            (0, 255, 0),
+                            2,
+                        )
+                except Exception as e:
+                    # If any error occurs, use simulated frame
+                    logger.error(f"Error capturing camera frame: {e}")
+                    frame = create_simulated_frame()
 
-        # Sleep to control frame rate
-        await asyncio.sleep(0.1)
+            # Convert frame to JPEG
+            ret, buffer = cv2.imencode(".jpg", frame)
+            if ret:
+                frame_bytes = buffer.tobytes()
+                yield (
+                    b"--frame\r\n"
+                    b"Content-Type: image/jpeg\r\n\r\n" + frame_bytes + b"\r\n"
+                )
+            else:
+                logger.error("Failed to encode frame to JPEG")
+
+            # Sleep to control frame rate
+            await asyncio.sleep(0.1)
+        except Exception as e:
+            logger.error(f"Error in frame generation loop: {e}")
+            await asyncio.sleep(1)
 
 
 def create_error_frame(message):
@@ -329,9 +414,16 @@ if os.path.exists(recordings_dir):
 if __name__ == "__main__":
     import uvicorn
 
-    print("🛡️ מפעיל Enhanced Security Dashboard...")
-    print("📱 פתח בדפדפן: http://localhost:8001")
-    uvicorn.run(app, host="0.0.0.0", port=8001)
+    logger.info("🛡️ Starting Enhanced Security Dashboard...")
+    logger.info(f"📱 Open in browser: http://localhost:{PORT}")
+    logger.info(f"🔧 Debug mode: {DEBUG}")
+
+    uvicorn.run(
+        app,
+        host=HOST,
+        port=PORT,
+        log_level="debug" if DEBUG else "info"
+    )
 
 # This is for Vercel deployment - it needs to import the app variable
 # The variable name 'app' is what Vercel looks for by default
